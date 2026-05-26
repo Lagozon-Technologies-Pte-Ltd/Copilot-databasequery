@@ -1,20 +1,18 @@
 from fastapi import FastAPI
-from dotenv import load_dotenv
-import os
 import pyodbc
+import os
+from dotenv import load_dotenv
 
-# Load .env variables
 load_dotenv()
 
 app = FastAPI()
 
-# Environment Variables
+# Azure SQL Connection
 server = os.getenv("DB_SERVER")
 database = os.getenv("DB_NAME")
 username = os.getenv("DB_USER")
 password = os.getenv("DB_PASSWORD")
 
-# SQL Connection String
 connection_string = f"""
 DRIVER={{ODBC Driver 18 for SQL Server}};
 SERVER={server};
@@ -43,28 +41,38 @@ async def execute_query(data: dict):
             "error": "No SQL query provided"
         }
 
-    # Allow ONLY SELECT queries
+    # Allow only SELECT queries
     if not sql_query.strip().upper().startswith("SELECT"):
         return {
             "error": "Only SELECT queries are allowed"
         }
 
+    # Block dangerous SQL
+    blocked_keywords = [
+        "DELETE",
+        "DROP",
+        "UPDATE",
+        "ALTER",
+        "INSERT",
+        "TRUNCATE"
+    ]
+
+    for keyword in blocked_keywords:
+        if keyword in sql_query.upper():
+            return {
+                "error": f"{keyword} operations are not allowed"
+            }
+
     try:
 
-        # Connect to Azure SQL
         conn = pyodbc.connect(connection_string)
         cursor = conn.cursor()
 
-        # Execute Query
         cursor.execute(sql_query)
 
-        # Get column names
         columns = [column[0] for column in cursor.description]
-
-        # Fetch rows
         rows = cursor.fetchall()
 
-        # Convert rows to JSON
         results = []
 
         for row in rows:
@@ -72,8 +80,27 @@ async def execute_query(data: dict):
 
         conn.close()
 
+        # ---------- FORMAT RESPONSE ----------
+        formatted_response = ""
+
+        if len(results) == 0:
+            formatted_response = "No records found."
+
+        else:
+
+            # Dynamic formatting
+            for index, row in enumerate(results, start=1):
+
+                formatted_response += f"Record {index}:\n"
+
+                for key, value in row.items():
+                    formatted_response += f"• {key}: {value}\n"
+
+                formatted_response += "\n"
+
         return {
-            "results": results
+            "formatted_response": formatted_response,
+            "raw_results": results
         }
 
     except Exception as e:
